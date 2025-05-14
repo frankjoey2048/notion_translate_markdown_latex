@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name             Notion-Formula-Auto-Conversion-Tool
 // @namespace        http://tampermonkey.net/
-// @version          1.34 // 
-// @description      自动公式转换工具 - 简洁悬浮小球，支持更快的拖动响应和悬浮展开（带延迟隐藏）
+// @version          1.35 // Added stop conversion feature
+// @description      自动公式转换工具 - 简洁悬浮小球，支持更快的拖动响应和悬浮展开（带延迟隐藏），可中途停止转换
 // @author           temp
 // @match            https://www.notion.so/*
 // @grant            GM_addStyle
@@ -142,6 +142,7 @@
         #progress-overlay.visible {
             opacity: 1;
             transform: translateY(0);
+            pointer-events: auto; /* Enable interaction with stop button */
         }
 
         #progress-status {
@@ -154,6 +155,7 @@
             background: #eee;
             border-radius: 2px;
             overflow: hidden;
+            margin-bottom: 8px; /* Add space for stop button */
         }
 
         #progress-bar {
@@ -163,12 +165,36 @@
             border-radius: 2px;
             transition: width 0.3s ease-out;
         }
+
+        /* Stop button style */
+        #stop-btn {
+            background: #f5f5f5;
+            border: none;
+            border-radius: 4px;
+            padding: 4px 10px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #ff3232;
+            transition: background 0.2s;
+            font-weight: 500;
+            width: 100%;
+            text-align: center;
+        }
+
+        #stop-btn:hover {
+            background: #eaeaea;
+        }
+
+        #stop-btn:active {
+            background: #e0e0e0;
+        }
     `);
 
     // Cache DOM elements and state
-    let floatingBall, convertBtn, progressOverlay, progressStatus, progressBar;
+    let floatingBall, convertBtn, progressOverlay, progressStatus, progressBar, stopBtn;
     let isProcessing = false;
     let formulaCount = 0;
+    let shouldStopProcessing = false;
 
     // --- Dragging related variables ---
     let isDragging = false;
@@ -217,14 +243,17 @@
             <div id="progress-bar-container">
                 <div id="progress-bar"></div>
             </div>
+            <button id="stop-btn">停止转换</button>
         `;
         document.body.appendChild(progressOverlay);
 
         convertBtn = document.getElementById('convert-btn');
         progressStatus = document.getElementById('progress-status');
         progressBar = document.getElementById('progress-bar');
+        stopBtn = document.getElementById('stop-btn');
 
         convertBtn.addEventListener('click', startConversion);
+        stopBtn.addEventListener('click', stopConversion);
 
         // Expand on hover with delay before hiding
         floatingBall.addEventListener('mouseenter', () => {
@@ -247,6 +276,13 @@
         document.addEventListener('mouseup', handleDragEnd);
 
         setTimeout(updateFormulaCount, 1000);
+    }
+
+    // Stop conversion process
+    function stopConversion() {
+        if (!isProcessing) return;
+        shouldStopProcessing = true;
+        updateStatus('正在停止转换...');
     }
 
     // Dragging animation loop
@@ -330,7 +366,11 @@
         const countElement = document.getElementById('formula-count');
         if (!countElement) return;
         formulaCount = 0;
+
+        // Optimize by using a single selector and caching the results
+        const editors = document.querySelectorAll('[contenteditable="true"]');
         const mainContentDivs = document.querySelectorAll('div[aria-label="开始输入以编辑文本"]');
+
         if (mainContentDivs.length > 0) {
             mainContentDivs.forEach(mainDiv => {
                 const text = mainDiv.textContent;
@@ -338,7 +378,6 @@
                 formulaCount += formulas.length;
             });
         } else {
-            const editors = document.querySelectorAll('[contenteditable="true"]');
             for (const editor of editors) {
                 if (!editor.closest('.notion-overlay-container')) {
                     const text = editor.textContent;
@@ -350,10 +389,11 @@
         countElement.textContent = `检测到 ${formulaCount} 个公式`;
     }
 
-    // Start conversion process 
+    // Start conversion process
     function startConversion() {
         if (isProcessing) return;
         isProcessing = true;
+        shouldStopProcessing = false; // Reset stop flag
         convertBtn.classList.add('processing');
         convertBtn.textContent = '处理中';
         floatingBall.classList.add('active');
@@ -368,7 +408,7 @@
         });
     }
 
-    // Show/hide progress overlay 
+    // Show/hide progress overlay
     function showProgressOverlay() {
         progressOverlay.classList.add('visible');
         updateProgress(0, 1);
@@ -389,8 +429,10 @@
         console.log('[Notion Formula]', text);
     }
 
-    // Find formulas 
+    // Find formulas with optimized regex
     function findFormulas(text) {
+        if (!text) return [];
+
         const formulas = [];
         const combinedRegex = /\$\$(.*?)\$\$|\$([^\$\n]+?)\$|\\\((.*?)\\\)|\\\[(.*?)\]\\/gs;
         let match;
@@ -426,15 +468,19 @@
     // Delay function
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-    // Main function to convert all formulas 
+    // Main function to convert all formulas
     async function convertFormulas() {
         updateStatus('扫描文档中...');
         const formulasToProcess = [];
+
+        // Optimize selectors and cache results
+        const editors = document.querySelectorAll('[contenteditable="true"]');
         const mainContentDivs = document.querySelectorAll('div[aria-label="开始输入以编辑文本"]');
+
         if (mainContentDivs.length > 0) {
             mainContentDivs.forEach(mainDiv => {
-                const editors = mainDiv.querySelectorAll('[contenteditable="true"]');
-                editors.forEach(editor => {
+                const mainDivEditors = mainDiv.querySelectorAll('[contenteditable="true"]');
+                mainDivEditors.forEach(editor => {
                     if (!editor.closest('.notion-overlay-container')) {
                         const text = editor.textContent;
                         const formulas = findFormulas(text);
@@ -447,7 +493,6 @@
                 });
             });
         } else {
-            const editors = document.querySelectorAll('[contenteditable="true"]');
             for (const editor of editors) {
                 if (!editor.closest('.notion-overlay-container')) {
                     const text = editor.textContent;
@@ -478,7 +523,15 @@
         updateProgress(0, totalFormulas);
         let successCount = 0;
         let failCount = 0;
+
+        // Process formulas in reverse order (typically from bottom to top in the document)
         for (let i = validFormulas.length - 1; i >= 0; i--) {
+            // Check if we should stop processing
+            if (shouldStopProcessing) {
+                updateStatus(`已停止: 成功 ${successCount}/${totalFormulas - failCount} (共 ${totalFormulas})`);
+                return;
+            }
+
             const { editor, formulaObject } = validFormulas[i];
             const currentIndex = totalFormulas - i;
             updateStatus(`正在转换公式 (${currentIndex}/${totalFormulas})`);
@@ -494,10 +547,15 @@
         updateStatus(`完成: 成功 ${successCount}/${totalFormulas}`);
     }
 
-    // Convert a single formula 
+    // Convert a single formula
     async function convertSingleFormula(editor, formulaObject) {
         const { fullMatch, content, type } = formulaObject;
         try {
+            // Check if we should stop processing before each formula conversion
+            if (shouldStopProcessing) {
+                return false;
+            }
+
             const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
             let targetNode = null;
             let startOffset = -1;
@@ -522,6 +580,10 @@
             targetNode.parentElement.focus({ preventScroll: true });
             document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
             await sleep(400);
+
+            // Check for stop after each delay
+            if (shouldStopProcessing) return false;
+
             const area = await findOperationArea();
             if (!area) {
                 console.warn("Operation area not found.");
@@ -529,27 +591,54 @@
                 pressEscape();
                 return false;
             }
+
+            // Check for stop after each major step
+            if (shouldStopProcessing) {
+                pressEscape();
+                return false;
+            }
+
             const formulaButton = await findButton(area, {
                 hasSvg: true,
                 svgClass: 'equation',
                 buttonText: ['equation', '公式', 'math'],
                 attempts: 30,
-                delay: 120
+                delay: 120,
+                shouldStop: () => shouldStopProcessing
             });
+
             if (!formulaButton) {
                 console.warn("Formula button not found.");
                 selection.removeAllRanges();
                 pressEscape();
                 return false;
             }
+
+            if (shouldStopProcessing) {
+                pressEscape();
+                return false;
+            }
+
             await simulateClick(formulaButton);
             await sleep(800);
+
+            if (shouldStopProcessing) {
+                pressEscape();
+                return false;
+            }
+
             const editorInputArea = await findEditorInput(area);
             if (!editorInputArea) {
                 console.warn("Formula editor input area not found.");
                 pressEscape();
                 return false;
             }
+
+            if (shouldStopProcessing) {
+                pressEscape();
+                return false;
+            }
+
             editorInputArea.focus({ preventScroll: true });
             if (editorInputArea.matches('[contenteditable="true"]')) {
                 editorInputArea.textContent = '';
@@ -563,13 +652,32 @@
             }
             editorInputArea.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
             await sleep(50);
+
+            if (shouldStopProcessing) {
+                pressEscape();
+                return false;
+            }
+
             simulateTyping(editorInputArea);
             await sleep(50);
+
+            if (shouldStopProcessing) {
+                pressEscape();
+                return false;
+            }
+
             let doneButtonElement = null;
             for (let attempt = 0; attempt < 40; attempt++) {
+                if (shouldStopProcessing) {
+                    pressEscape();
+                    return false;
+                }
+
                 const currentDoneButton = await findButton(area, {
                     buttonText: ['done', '完成'],
+                    shouldStop: () => shouldStopProcessing
                 });
+
                 if (currentDoneButton) {
                     const isDisabled = currentDoneButton.getAttribute('aria-disabled') === 'true' ||
                                      currentDoneButton.disabled;
@@ -580,11 +688,18 @@
                 }
                 await sleep(150);
             }
+
             if (!doneButtonElement) {
                 console.warn("Done button not found or remained disabled.");
                 pressEscape();
                 return false;
             }
+
+            if (shouldStopProcessing) {
+                pressEscape();
+                return false;
+            }
+
             await simulateClick(doneButtonElement);
             await sleep(600);
             return true;
@@ -595,7 +710,7 @@
         }
     }
 
-    // Press Escape key 
+    // Press Escape key
     function pressEscape() {
         document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
         setTimeout(() => {
@@ -603,7 +718,7 @@
         }, 50);
     }
 
-    // Simulate typing 
+    // Simulate typing
     async function simulateTyping(element) {
         element.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
         await sleep(20);
@@ -618,10 +733,12 @@
         element.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
     }
 
-    // Find operation area 
+    // Find operation area
     async function findOperationArea() {
         const selector = '.notion-overlay-container';
         for (let i = 0; i < 30; i++) {
+            if (shouldStopProcessing) return null;
+
             const areas = document.querySelectorAll(selector);
             const area = Array.from(areas).find(a =>
                 a.style.display !== 'none' &&
@@ -635,16 +752,21 @@
         return null;
     }
 
-    // Find button 
+    // Find button with stop check
     async function findButton(area, options = {}) {
         const {
             buttonText = [],
             hasSvg = false,
             svgClass = 'equation',
             attempts = 30,
-            delay = 100
+            delay = 100,
+            shouldStop = () => false
         } = options;
+
         for (let i = 0; i < attempts; i++) {
+            // Check if we should stop
+            if (shouldStop()) return null;
+
             const buttons = area.querySelectorAll('[role="button"]');
             const button = Array.from(buttons).find(btn => {
                 if (hasSvg && btn.querySelector(`svg.${svgClass}`)) {
@@ -664,8 +786,11 @@
         return null;
     }
 
-    // Find editor input area 
+    // Find editor input area
     async function findEditorInput(area) {
+        // Check if we should stop
+        if (shouldStopProcessing) return null;
+
         const selectors = [
             'div[contenteditable="true"][role="textbox"][data-content-editable-leaf="true"]',
             'div[contenteditable="true"][placeholder="E = mc^2"]',
@@ -681,22 +806,32 @@
             'textarea[data-placeholder="Enter LaTeX"]',
             '.notion-selectable-force-within > div[contenteditable="true"]'
         ];
+
+        // Try all selectors at once to reduce waiting
         for (const selector of selectors) {
             const inputElement = area.querySelector(selector);
             if (inputElement && inputElement.offsetWidth > 0 && inputElement.offsetHeight > 0) {
                 return inputElement;
             }
         }
+
+        // Fallback options
         let fallbackInput = area.querySelector('div[contenteditable="true"]:not([style*="display: none"])');
         if (fallbackInput && fallbackInput.offsetWidth > 0 && fallbackInput.offsetHeight > 0) return fallbackInput;
+
         fallbackInput = area.querySelector('textarea:not([style*="display: none"])');
         if (fallbackInput && fallbackInput.offsetWidth > 0 && fallbackInput.offsetHeight > 0) return fallbackInput;
+
         return null;
     }
 
     // Simulate click
     async function simulateClick(element) {
         if (!element) return;
+
+        // Check if we should stop before simulating click
+        if (shouldStopProcessing) return;
+
         const rect = element.getBoundingClientRect();
         const centerX = rect.left + rect.width / 2;
         const centerY = rect.top + rect.height / 2;
@@ -707,28 +842,36 @@
             new MouseEvent('mouseup', { bubbles: true, cancelable: true, clientX: centerX, clientY: centerY }),
             new MouseEvent('click', { bubbles: true, cancelable: true, clientX: centerX, clientY: centerY })
         ];
+
         for (const event of events) {
+            // Check if we should stop during click sequence
+            if (shouldStopProcessing) return;
+
             element.dispatchEvent(event);
             await sleep(30);
         }
     }
 
-    // Observe DOM changes 
+    // Observe DOM changes with debounce to improve performance
+    let lastObserverRun = 0;
+    const observerDebounceTime = 1000; // 1 second debounce
+
     const observer = new MutationObserver(() => {
-        clearTimeout(observer.timer);
-        observer.timer = setTimeout(() => {
+        const now = Date.now();
+        if (now - lastObserverRun > observerDebounceTime) {
+            lastObserverRun = now;
             if (!document.getElementById('formula-floating-ball')) {
                 createUI();
             }
-        }, 1500);
+        }
     });
 
-    // Start observer 
+    // Start observer
     setTimeout(() => {
         createUI();
         const target = document.querySelector('.notion-app-inner') || document.body;
         observer.observe(target, { childList: true, subtree: true });
     }, 1000);
 
-    console.log('Notion公式转换工具已加载 (v1.34 - 悬浮小球+更快的拖动响应+悬浮展开(延迟隐藏))');
+    console.log('Notion公式转换工具已加载 (v1.35 - 悬浮小球+更快的拖动响应+悬浮展开(延迟隐藏)+中途停止功能)');
 })();
