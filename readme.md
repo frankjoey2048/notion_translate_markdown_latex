@@ -28,7 +28,7 @@
 
 ### 1. 安装油猴插件
 
-安装Tampermonkey浏览器扩展，并开启开发者模式（Chrome、Edge、Firefox均支持）
+安装Tampermonkey浏览器扩展，并开启*开发者模式*（Chrome、Edge均支持，其中chrome还要在管理扩展程序/所有扩展程序/详情中开启*允许运行用户脚本*）
 
 ![image-20250513143909434](./assets/image-20250513143909434.png)
 
