@@ -1,20 +1,18 @@
 // ==UserScript==
-// @name             Notion-Formula-Auto-Conversion-Tool
+// @name             Notion-Formula-Auto-Conversion-Tool-Improved
 // @namespace        http://tampermonkey.net/
-// @version          1.35 // Added stop conversion feature
-// @description      自动公式转换工具 - 简洁悬浮小球，支持更快的拖动响应和悬浮展开（带延迟隐藏），可中途停止转换
+// @version          1.40
+// @description      自动公式转换工具 - 修复跨节点公式识别问题
 // @author           temp
 // @match            https://www.notion.so/*
 // @grant            GM_addStyle
 // @require          https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js
-// @downloadURL      https://update.greasyfork.org/scripts/525730/Notion-Formula-Auto-Conversion-Tool.user.js
-// @updateURL        https://update.greasyfork.org/scripts/525730/Notion-Formula-Auto-Conversion-Tool.meta.js
 // ==/UserScript==
 
 (function() {
     'use strict';
 
-    // Inject CSS styles
+    // Inject CSS styles (保持原有样式)
     GM_addStyle(`
         /* 悬浮小球 */
         #formula-floating-ball {
@@ -27,10 +25,9 @@
             align-items: center;
             cursor: pointer;
             user-select: none;
-            transition: all 0.25s ease; /* For non-top/transform properties */
+            transition: all 0.25s ease;
         }
 
-        /* 小球样式 */
         #formula-ball {
             width: 36px;
             height: 36px;
@@ -52,10 +49,9 @@
             transition: all 0.25s ease;
         }
 
-        /* 展开样式 */
         #formula-expanded {
             position: absolute;
-            right: 42px; /* Distance from the ball */
+            right: 42px;
             padding: 8px 12px;
             border-radius: 6px;
             background: white;
@@ -142,7 +138,7 @@
         #progress-overlay.visible {
             opacity: 1;
             transform: translateY(0);
-            pointer-events: auto; /* Enable interaction with stop button */
+            pointer-events: auto;
         }
 
         #progress-status {
@@ -155,7 +151,7 @@
             background: #eee;
             border-radius: 2px;
             overflow: hidden;
-            margin-bottom: 8px; /* Add space for stop button */
+            margin-bottom: 8px;
         }
 
         #progress-bar {
@@ -166,7 +162,6 @@
             transition: width 0.3s ease-out;
         }
 
-        /* Stop button style */
         #stop-btn {
             background: #f5f5f5;
             border: none;
@@ -196,16 +191,13 @@
     let formulaCount = 0;
     let shouldStopProcessing = false;
 
-    // --- Dragging related variables ---
+    // Dragging related variables
     let isDragging = false;
     let dragOffsetY = 0;
-    let currentY = 0; // Current animated Y position
-    let targetY = 0;  // Target Y position (mouse position)
+    let currentY = 0;
+    let targetY = 0;
     let animationFrameId = null;
-    // --- MODIFIED: Increased Easing Factor for faster response ---
-    const EASING_FACTOR = 0.6; // Adjusted from 0.2 to 0.6 for quicker following
-
-    // Hover related variable
+    const EASING_FACTOR = 0.6;
     let hideTimeout = null;
 
     // Create UI components
@@ -232,9 +224,6 @@
         const initialRect = floatingBall.getBoundingClientRect();
         currentY = initialRect.top;
         targetY = initialRect.top;
-        // Set initial position. If CSS transform: translateY(-50%) is used,
-        // 'top' should be set considering this.
-        // For simplicity, drag start will explicitly set 'top' and remove transform.
 
         progressOverlay = document.createElement('div');
         progressOverlay.id = 'progress-overlay';
@@ -287,68 +276,54 @@
 
     // Dragging animation loop
     function dragAnimationLoop() {
-        // If not dragging and close enough to target, snap to final position and stop animation.
         if (!isDragging && Math.abs(targetY - currentY) < 0.1) {
             floatingBall.style.top = `${targetY.toFixed(1)}px`;
-            animationFrameId = null; // Stop the loop
+            animationFrameId = null;
             return;
         }
-
-        // Apply easing: move a fraction of the distance to the target each frame.
         currentY += (targetY - currentY) * EASING_FACTOR;
         floatingBall.style.top = `${currentY.toFixed(1)}px`;
-
-        // Continue the animation loop only if dragging or if not yet at target.
-        // This condition is implicitly handled by the first check in the loop.
-        // If isDragging is true, it will always continue.
-        // If isDragging is false, it continues until currentY is close to targetY.
         animationFrameId = requestAnimationFrame(dragAnimationLoop);
     }
 
     // Drag handling functions
     function handleDragStart(e) {
         if (e.target.closest('#convert-btn') || e.target.closest('#formula-expanded')) {
-            return; // Don't drag if clicking on button or expanded panel
+            return;
         }
         if (!document.getElementById('formula-ball').contains(e.target)) {
-            return; // Only drag by the ball itself
+            return;
         }
 
         isDragging = true;
-        const rect = floatingBall.getBoundingClientRect(); // Get current position
+        const rect = floatingBall.getBoundingClientRect();
         dragOffsetY = e.clientY - rect.top;
-
-        // Initialize currentY and targetY from the element's current rendered top position
         currentY = rect.top;
         targetY = rect.top;
 
         floatingBall.style.cursor = 'grabbing';
-        // Switch from transform-based centering to explicit top-based positioning for drag
         floatingBall.style.transform = 'none';
-        floatingBall.style.top = `${currentY}px`; // Apply current position immediately
+        floatingBall.style.top = `${currentY}px`;
+        floatingBall.classList.remove('expanded');
+        clearTimeout(hideTimeout);
 
-        floatingBall.classList.remove('expanded'); // Hide panel during drag
-        clearTimeout(hideTimeout); // Clear any pending hide for the panel
-
-        if (!animationFrameId) { // Start animation loop if not already running
+        if (!animationFrameId) {
             animationFrameId = requestAnimationFrame(dragAnimationLoop);
         }
-        e.preventDefault(); // Prevent text selection
+        e.preventDefault();
     }
 
     function handleDragMove(e) {
         if (!isDragging) return;
 
         const newY = e.clientY - dragOffsetY;
-        // Constrain within viewport (with small buffer)
-        const maxY = window.innerHeight - floatingBall.offsetHeight - 10; // 10px buffer
-        const minY = 10; // 10px buffer
+        const maxY = window.innerHeight - floatingBall.offsetHeight - 10;
+        const minY = 10;
 
         targetY = Math.max(minY, Math.min(maxY, newY));
 
-        // Ensure animation loop is running if it somehow stopped
         if (!animationFrameId) {
-           currentY = parseFloat(floatingBall.style.top) || targetY; // Re-sync currentY
+           currentY = parseFloat(floatingBall.style.top) || targetY;
            animationFrameId = requestAnimationFrame(dragAnimationLoop);
         }
     }
@@ -357,8 +332,6 @@
         if (isDragging) {
             floatingBall.style.cursor = 'pointer';
             isDragging = false;
-            // Animation loop will continue to smoothly settle the ball to targetY
-            // If mouse is still over floatingBall, mouseenter will handle re-expansion.
         }
     }
 
@@ -367,20 +340,19 @@
         if (!countElement) return;
         formulaCount = 0;
 
-        // Optimize by using a single selector and caching the results
         const editors = document.querySelectorAll('[contenteditable="true"]');
         const mainContentDivs = document.querySelectorAll('div[aria-label="开始输入以编辑文本"]');
 
         if (mainContentDivs.length > 0) {
             mainContentDivs.forEach(mainDiv => {
-                const text = mainDiv.textContent;
+                const text = getCleanTextContent(mainDiv);
                 const formulas = findFormulas(text);
                 formulaCount += formulas.length;
             });
         } else {
             for (const editor of editors) {
                 if (!editor.closest('.notion-overlay-container')) {
-                    const text = editor.textContent;
+                    const text = getCleanTextContent(editor);
                     const formulas = findFormulas(text);
                     formulaCount += formulas.length;
                 }
@@ -389,11 +361,28 @@
         countElement.textContent = `检测到 ${formulaCount} 个公式`;
     }
 
+    // 获取清理后的文本内容（处理跨节点问题）
+    function getCleanTextContent(element) {
+        // 克隆节点以避免修改原始DOM
+        const clone = element.cloneNode(true);
+
+        // 移除所有样式相关的属性，但保留文本
+        const allElements = clone.querySelectorAll('*');
+        allElements.forEach(el => {
+            // 保留文本内容，移除属性
+            if (el.tagName === 'BR') {
+                el.replaceWith('\n');
+            }
+        });
+
+        return clone.textContent || '';
+    }
+
     // Start conversion process
     function startConversion() {
         if (isProcessing) return;
         isProcessing = true;
-        shouldStopProcessing = false; // Reset stop flag
+        shouldStopProcessing = false;
         convertBtn.classList.add('processing');
         convertBtn.textContent = '处理中';
         floatingBall.classList.add('active');
@@ -408,7 +397,6 @@
         });
     }
 
-    // Show/hide progress overlay
     function showProgressOverlay() {
         progressOverlay.classList.add('visible');
         updateProgress(0, 1);
@@ -418,7 +406,6 @@
         progressOverlay.classList.remove('visible');
     }
 
-    // Update progress information
     function updateProgress(current, total) {
         const percentage = total > 0 ? (current / total) * 100 : 0;
         progressBar.style.width = `${percentage}%`;
@@ -465,15 +452,13 @@
         return formulas;
     }
 
-    // Delay function
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-    // Main function to convert all formulas
+    // 改进的公式转换主函数
     async function convertFormulas() {
         updateStatus('扫描文档中...');
         const formulasToProcess = [];
 
-        // Optimize selectors and cache results
         const editors = document.querySelectorAll('[contenteditable="true"]');
         const mainContentDivs = document.querySelectorAll('div[aria-label="开始输入以编辑文本"]');
 
@@ -482,7 +467,7 @@
                 const mainDivEditors = mainDiv.querySelectorAll('[contenteditable="true"]');
                 mainDivEditors.forEach(editor => {
                     if (!editor.closest('.notion-overlay-container')) {
-                        const text = editor.textContent;
+                        const text = getCleanTextContent(editor);
                         const formulas = findFormulas(text);
                         if (formulas.length > 0) {
                             formulas.forEach(formula => {
@@ -495,7 +480,7 @@
         } else {
             for (const editor of editors) {
                 if (!editor.closest('.notion-overlay-container')) {
-                    const text = editor.textContent;
+                    const text = getCleanTextContent(editor);
                     const formulas = findFormulas(text);
                     if (formulas.length > 0) {
                         formulas.forEach(formula => {
@@ -509,7 +494,8 @@
         const validFormulas = [];
         for (let i = 0; i < formulasToProcess.length; i++) {
             const { editor, formulaObject } = formulasToProcess[i];
-            if (editor && editor.textContent && editor.textContent.includes(formulaObject.fullMatch)) {
+            const currentText = getCleanTextContent(editor);
+            if (currentText && currentText.includes(formulaObject.fullMatch)) {
                 validFormulas.push(formulasToProcess[i]);
             }
         }
@@ -524,9 +510,7 @@
         let successCount = 0;
         let failCount = 0;
 
-        // Process formulas in reverse order (typically from bottom to top in the document)
         for (let i = validFormulas.length - 1; i >= 0; i--) {
-            // Check if we should stop processing
             if (shouldStopProcessing) {
                 updateStatus(`已停止: 成功 ${successCount}/${totalFormulas - failCount} (共 ${totalFormulas})`);
                 return;
@@ -547,52 +531,32 @@
         updateStatus(`完成: 成功 ${successCount}/${totalFormulas}`);
     }
 
-    // Convert a single formula
+    // 改进的单个公式转换函数
     async function convertSingleFormula(editor, formulaObject) {
         const { fullMatch, content, type } = formulaObject;
         try {
-            // Check if we should stop processing before each formula conversion
             if (shouldStopProcessing) {
                 return false;
             }
 
-            const walker = document.createTreeWalker(editor, NodeFilter.SHOW_TEXT);
-            let targetNode = null;
-            let startOffset = -1;
-            let currentNode;
-            while (currentNode = walker.nextNode()) {
-                startOffset = currentNode.textContent.indexOf(fullMatch);
-                if (startOffset !== -1) {
-                    targetNode = currentNode;
-                    break;
-                }
-            }
-            if (!targetNode) {
-                console.warn("Target node for formula not found:", fullMatch);
+            // 使用改进的选择方法
+            const selected = await selectFormulaText(editor, fullMatch);
+            if (!selected) {
+                console.warn("无法选择公式:", fullMatch.substring(0, 50) + '...');
                 return false;
             }
-            const range = document.createRange();
-            range.setStart(targetNode, startOffset);
-            range.setEnd(targetNode, startOffset + fullMatch.length);
-            const selection = window.getSelection();
-            selection.removeAllRanges();
-            selection.addRange(range);
-            targetNode.parentElement.focus({ preventScroll: true });
-            document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+
             await sleep(400);
 
-            // Check for stop after each delay
             if (shouldStopProcessing) return false;
 
             const area = await findOperationArea();
             if (!area) {
                 console.warn("Operation area not found.");
-                selection.removeAllRanges();
                 pressEscape();
                 return false;
             }
 
-            // Check for stop after each major step
             if (shouldStopProcessing) {
                 pressEscape();
                 return false;
@@ -609,7 +573,6 @@
 
             if (!formulaButton) {
                 console.warn("Formula button not found.");
-                selection.removeAllRanges();
                 pressEscape();
                 return false;
             }
@@ -704,10 +667,126 @@
             await sleep(600);
             return true;
         } catch (error) {
-            console.error("Error in convertSingleFormula:", error, "for formula:", fullMatch);
+            console.error("Error in convertSingleFormula:", error, "for formula:", fullMatch.substring(0, 50) + '...');
             pressEscape();
             return false;
         }
+    }
+
+    // 改进的文本选择函数（处理跨节点的情况）
+    async function selectFormulaText(editor, formulaText) {
+        try {
+            // 方法1：尝试使用Range API直接选择
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+
+            // 尝试查找包含完整公式的最小容器
+            const allElements = editor.querySelectorAll('div, span, p');
+            for (const element of allElements) {
+                const text = getCleanTextContent(element);
+                if (text && text.includes(formulaText)) {
+                    // 找到包含公式的元素，创建Range
+                    const range = document.createRange();
+
+                    // 尝试使用搜索算法找到确切位置
+                    const result = findTextInElement(element, formulaText);
+                    if (result) {
+                        range.setStart(result.startNode, result.startOffset);
+                        range.setEnd(result.endNode, result.endOffset);
+                        selection.addRange(range);
+
+                        // 触发焦点事件
+                        element.focus({ preventScroll: true });
+                        document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+                        return true;
+                    }
+                }
+            }
+
+            // 方法2：如果方法1失败，尝试全选然后查找替换
+            console.log('使用备用选择方法...');
+            editor.focus({ preventScroll: true });
+
+            // 全选编辑器内容
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            selection.addRange(range);
+
+            // 使用浏览器的查找功能（如果支持）
+            if (window.find) {
+                selection.removeAllRanges();
+                if (window.find(formulaText, false, false, false, false, false, false)) {
+                    document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+                    return true;
+                }
+            }
+
+            return false;
+        } catch (error) {
+            console.error('选择文本时出错:', error);
+            return false;
+        }
+    }
+
+    // 在元素中查找文本的辅助函数
+    function findTextInElement(element, searchText) {
+        const walker = document.createTreeWalker(
+            element,
+            NodeFilter.SHOW_TEXT,
+            null,
+            false
+        );
+
+        let node;
+        let aggregatedText = '';
+        let nodes = [];
+        let offsets = [];
+
+        // 收集所有文本节点
+        while (node = walker.nextNode()) {
+            nodes.push(node);
+            offsets.push(aggregatedText.length);
+            aggregatedText += node.textContent;
+        }
+
+        // 在聚合文本中查找目标文本
+        const startIndex = aggregatedText.indexOf(searchText);
+        if (startIndex === -1) {
+            return null;
+        }
+
+        const endIndex = startIndex + searchText.length;
+
+        // 找到开始和结束节点
+        let startNode = null, startOffset = 0;
+        let endNode = null, endOffset = 0;
+
+        for (let i = 0; i < nodes.length; i++) {
+            const nodeStart = offsets[i];
+            const nodeEnd = nodeStart + nodes[i].textContent.length;
+
+            if (startNode === null && startIndex >= nodeStart && startIndex < nodeEnd) {
+                startNode = nodes[i];
+                startOffset = startIndex - nodeStart;
+            }
+
+            if (endIndex > nodeStart && endIndex <= nodeEnd) {
+                endNode = nodes[i];
+                endOffset = endIndex - nodeStart;
+                break;
+            }
+        }
+
+        if (startNode && endNode) {
+            return {
+                startNode: startNode,
+                startOffset: startOffset,
+                endNode: endNode,
+                endOffset: endOffset
+            };
+        }
+
+        return null;
     }
 
     // Press Escape key
@@ -764,7 +843,6 @@
         } = options;
 
         for (let i = 0; i < attempts; i++) {
-            // Check if we should stop
             if (shouldStop()) return null;
 
             const buttons = area.querySelectorAll('[role="button"]');
@@ -788,7 +866,6 @@
 
     // Find editor input area
     async function findEditorInput(area) {
-        // Check if we should stop
         if (shouldStopProcessing) return null;
 
         const selectors = [
@@ -807,7 +884,6 @@
             '.notion-selectable-force-within > div[contenteditable="true"]'
         ];
 
-        // Try all selectors at once to reduce waiting
         for (const selector of selectors) {
             const inputElement = area.querySelector(selector);
             if (inputElement && inputElement.offsetWidth > 0 && inputElement.offsetHeight > 0) {
@@ -815,7 +891,6 @@
             }
         }
 
-        // Fallback options
         let fallbackInput = area.querySelector('div[contenteditable="true"]:not([style*="display: none"])');
         if (fallbackInput && fallbackInput.offsetWidth > 0 && fallbackInput.offsetHeight > 0) return fallbackInput;
 
@@ -828,8 +903,6 @@
     // Simulate click
     async function simulateClick(element) {
         if (!element) return;
-
-        // Check if we should stop before simulating click
         if (shouldStopProcessing) return;
 
         const rect = element.getBoundingClientRect();
@@ -844,17 +917,15 @@
         ];
 
         for (const event of events) {
-            // Check if we should stop during click sequence
             if (shouldStopProcessing) return;
-
             element.dispatchEvent(event);
             await sleep(30);
         }
     }
 
-    // Observe DOM changes with debounce to improve performance
+    // Observe DOM changes with debounce
     let lastObserverRun = 0;
-    const observerDebounceTime = 1000; // 1 second debounce
+    const observerDebounceTime = 1000;
 
     const observer = new MutationObserver(() => {
         const now = Date.now();
@@ -873,5 +944,5 @@
         observer.observe(target, { childList: true, subtree: true });
     }, 1000);
 
-    console.log('Notion公式转换工具已加载 (v1.35 - 悬浮小球+更快的拖动响应+悬浮展开(延迟隐藏)+中途停止功能)');
+    console.log('Notion公式转换工具已加载 (v1.40 - 修复跨节点公式识别)');
 })();
