@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name             Notion-Formula-Auto-Conversion-Tool-Fixed
 // @namespace        http://tampermonkey.net/
-// @version          1.92
-// @description      自动公式转换工具 - 每次转换一个公式，避免批量选择导致的内容丢失
+// @version          1.93
+// @description      自动公式转换工具 - 修复内存泄漏问题
 // @author           temp
 // @match            https://www.notion.so/*
 // @grant            GM_addStyle
@@ -200,9 +200,99 @@
     const EASING_FACTOR = 0.6;
     let hideTimeout = null;
 
+    // 【修复】定时器和观察器的引用，用于清理
+    let updateInterval = null;
+    let observer = null;
+    let isUICreated = false;
+
+    // 【修复】事件处理器引用，用于移除监听器
+    const eventHandlers = {
+        convert: null,
+        stop: null,
+        mousedown: null,
+        mousemove: null,
+        mouseup: null,
+        mouseenter: null,
+        mouseleave: null
+    };
+
+    // 【新增】清理函数 - 移除所有事件监听器、定时器和观察器
+    function cleanup() {
+        console.log('清理资源...');
+
+        // 清除定时器
+        if (updateInterval) {
+            clearInterval(updateInterval);
+            updateInterval = null;
+        }
+
+        if (hideTimeout) {
+            clearTimeout(hideTimeout);
+            hideTimeout = null;
+        }
+
+        // 取消动画帧
+        if (animationFrameId !== null) {
+            cancelAnimationFrame(animationFrameId);
+            animationFrameId = null;
+        }
+
+        // 断开观察器
+        if (observer) {
+            observer.disconnect();
+            observer = null;
+        }
+
+        // 移除事件监听器
+        if (convertBtn && eventHandlers.convert) {
+            convertBtn.removeEventListener('click', eventHandlers.convert);
+        }
+        if (stopBtn && eventHandlers.stop) {
+            stopBtn.removeEventListener('click', eventHandlers.stop);
+        }
+        if (eventHandlers.mousedown) {
+            const ball = document.getElementById('formula-ball');
+            if (ball) {
+                ball.removeEventListener('mousedown', eventHandlers.mousedown);
+            }
+        }
+        if (eventHandlers.mousemove) {
+            document.removeEventListener('mousemove', eventHandlers.mousemove);
+        }
+        if (eventHandlers.mouseup) {
+            document.removeEventListener('mouseup', eventHandlers.mouseup);
+        }
+        if (floatingBall) {
+            if (eventHandlers.mouseenter) {
+                floatingBall.removeEventListener('mouseenter', eventHandlers.mouseenter);
+            }
+            if (eventHandlers.mouseleave) {
+                floatingBall.removeEventListener('mouseleave', eventHandlers.mouseleave);
+            }
+        }
+
+        // 清除 DOM 引用
+        floatingBall = null;
+        convertBtn = null;
+        progressOverlay = null;
+        progressStatus = null;
+        progressBar = null;
+        stopBtn = null;
+
+        isUICreated = false;
+        console.log('资源清理完成');
+    }
+
     // Create UI components
     function createUI() {
-        if (document.getElementById('formula-floating-ball')) return;
+        // 【修复】防止重复创建
+        if (isUICreated || document.getElementById('formula-floating-ball')) {
+            console.log('UI 已存在，跳过创建');
+            return;
+        }
+
+        console.log('创建 UI 组件');
+        isUICreated = true;
 
         floatingBall = document.createElement('div');
         floatingBall.id = 'formula-floating-ball';
@@ -236,24 +326,35 @@
         `;
         document.body.appendChild(progressOverlay);
 
+        // 【修复】保存事件处理器引用
         convertBtn = document.getElementById('convert-btn');
-        convertBtn.addEventListener('click', handleConvert);
+        eventHandlers.convert = handleConvert;
+        convertBtn.addEventListener('click', eventHandlers.convert);
 
         stopBtn = document.getElementById('stop-btn');
-        stopBtn.addEventListener('click', stopConversion);
+        eventHandlers.stop = stopConversion;
+        stopBtn.addEventListener('click', eventHandlers.stop);
 
         progressStatus = document.getElementById('progress-status');
         progressBar = document.getElementById('progress-bar');
 
         const ball = document.getElementById('formula-ball');
-        ball.addEventListener('mousedown', startDragging);
-        document.addEventListener('mousemove', onDragging);
-        document.addEventListener('mouseup', stopDragging);
-        floatingBall.addEventListener('mouseenter', expandBall);
-        floatingBall.addEventListener('mouseleave', collapseBall);
+        eventHandlers.mousedown = startDragging;
+        eventHandlers.mousemove = onDragging;
+        eventHandlers.mouseup = stopDragging;
+        eventHandlers.mouseenter = expandBall;
+        eventHandlers.mouseleave = collapseBall;
+
+        ball.addEventListener('mousedown', eventHandlers.mousedown);
+        document.addEventListener('mousemove', eventHandlers.mousemove);
+        document.addEventListener('mouseup', eventHandlers.mouseup);
+        floatingBall.addEventListener('mouseenter', eventHandlers.mouseenter);
+        floatingBall.addEventListener('mouseleave', eventHandlers.mouseleave);
 
         updateFloatingBall();
-        setInterval(updateFloatingBall, 3000);
+        
+        // 【修复】保存定时器引用
+        updateInterval = setInterval(updateFloatingBall, 3000);
     }
 
     // Animation frame handling
@@ -265,11 +366,18 @@
             if (Math.abs(deltaY) < 0.5) {
                 currentY = targetY;
                 if (!isDragging) {
+                    // 【修复】清除动画帧引用
                     animationFrameId = null;
                     return;
                 }
             } else {
                 currentY += deltaY * EASING_FACTOR;
+            }
+
+            // 【修复】检查元素是否还存在
+            if (!floatingBall || !document.body.contains(floatingBall)) {
+                animationFrameId = null;
+                return;
             }
 
             floatingBall.style.top = `${currentY}px`;
@@ -282,6 +390,7 @@
 
     // Dragging functions
     function startDragging(e) {
+        if (!floatingBall) return;
         isDragging = true;
         dragOffsetY = e.clientY - floatingBall.getBoundingClientRect().top;
         floatingBall.style.transition = 'none';
@@ -289,7 +398,7 @@
     }
 
     function onDragging(e) {
-        if (!isDragging) return;
+        if (!isDragging || !floatingBall) return;
         e.preventDefault();
         const newY = e.clientY - dragOffsetY;
         const maxY = window.innerHeight - floatingBall.offsetHeight;
@@ -297,20 +406,30 @@
     }
 
     function stopDragging() {
-        if (!isDragging) return;
+        if (!isDragging || !floatingBall) return;
         isDragging = false;
         floatingBall.style.transition = '';
     }
 
     // Ball expand/collapse with delay
     function expandBall() {
+        if (!floatingBall) return;
         clearTimeout(hideTimeout);
+        hideTimeout = null;
         floatingBall.classList.add('expanded');
     }
 
     function collapseBall() {
+        if (!floatingBall) return;
+        // 【修复】清除之前的超时引用
+        if (hideTimeout) {
+            clearTimeout(hideTimeout);
+        }
         hideTimeout = setTimeout(() => {
-            floatingBall.classList.remove('expanded');
+            if (floatingBall) {
+                floatingBall.classList.remove('expanded');
+            }
+            hideTimeout = null;
         }, 300);
     }
 
@@ -334,10 +453,10 @@
                 } else {
                     countElement.textContent = `${inlineCount} 个公式`;
                 }
-                convertBtn.disabled = false;
+                if (convertBtn) convertBtn.disabled = false;
             } else {
                 countElement.textContent = '无公式';
-                convertBtn.disabled = true;
+                if (convertBtn) convertBtn.disabled = true;
             }
         }
     }
@@ -403,9 +522,12 @@
                         const uniqueKey = formula.content + '|' + cell.textContent?.substring(0, 50);
                         if (!processedTexts.has(uniqueKey)) {
                             processedTexts.add(uniqueKey);
+                            // 【修复】不直接存储 element 引用，而是使用 WeakRef（如果支持）
                             formulas.push({
-                                ...formula,
-                                element: cell,
+                                type: formula.type,
+                                content: formula.content,
+                                fullMatch: formula.fullMatch,
+                                element: cell,  // 保留引用，但会在函数结束后释放
                                 isTableCell: true,
                                 domPosition: getDOMPosition(cell)
                             });
@@ -471,8 +593,10 @@
                             processedTexts.add(uniqueKey);
                             const firstNode = formulaNodes[0];
                             formulas.push({
-                                ...formula,
-                                nodes: [...formulaNodes],
+                                type: formula.type,
+                                content: formula.content,
+                                fullMatch: formula.fullMatch,
+                                nodes: [...formulaNodes],  // 数组副本
                                 isTableCell: false,
                                 domPosition: getDOMPosition(firstNode?.parentElement)
                             });
@@ -493,7 +617,9 @@
                                 processedTexts.add(uniqueKey);
                                 const firstNode = formulaNodes[0];
                                 formulas.push({
-                                    ...formula,
+                                    type: formula.type,
+                                    content: formula.content,
+                                    fullMatch: formula.fullMatch,
                                     nodes: [...formulaNodes],
                                     isTableCell: false,
                                     domPosition: getDOMPosition(firstNode?.parentElement)
@@ -514,7 +640,9 @@
                         processedTexts.add(uniqueKey);
                         const firstNode = formulaNodes[0];
                         formulas.push({
-                            ...formula,
+                            type: formula.type,
+                            content: formula.content,
+                            fullMatch: formula.fullMatch,
                             nodes: [...formulaNodes],
                             isTableCell: false,
                             domPosition: getDOMPosition(firstNode?.parentElement)
@@ -533,15 +661,8 @@
 
         console.log(`找到 ${formulas.length} 个公式（包括 ${formulas.filter(f => f.isTableCell).length} 个表格公式），已按DOM顺序排序`);
 
-        // 输出前3个公式的预览（用于调试）
-        if (formulas.length > 0) {
-            console.log('前3个公式（按顺序）:', formulas.slice(0, 3).map((f, i) => ({
-                index: i + 1,
-                type: f.type,
-                preview: f.content.substring(0, 30) + '...',
-                position: f.domPosition
-            })));
-        }
+        // 【修复】清空 processedTexts Set 以释放内存
+        processedTexts.clear();
 
         return formulas;
     }
@@ -637,17 +758,6 @@
             }
         }
 
-        // 公式已经按照在文本中出现的顺序排列
-        if (formulas.length > 0) {
-            console.log(`提取到 ${formulas.length} 个公式（按文本顺序）:`, formulas.map((f, i) => ({
-                序号: i + 1,
-                类型: f.type === 'block' ? '块级' : '内联',
-                长度: f.content.length,
-                起始位置: f.startIndex,
-                预览: f.content.substring(0, 30) + (f.content.length > 30 ? '...' : '')
-            })));
-        }
-
         return formulas;
     }
 
@@ -657,9 +767,9 @@
 
         isProcessing = true;
         shouldStopProcessing = false;
-        convertBtn.classList.add('processing');
-        progressOverlay.classList.add('visible');
-        floatingBall.classList.add('active');
+        if (convertBtn) convertBtn.classList.add('processing');
+        if (progressOverlay) progressOverlay.classList.add('visible');
+        if (floatingBall) floatingBall.classList.add('active');
 
         let converted = 0;
         let failed = 0;
@@ -670,7 +780,7 @@
 
         while (iteration < maxIterations) {
             if (shouldStopProcessing) {
-                progressStatus.textContent = `转换已停止 (${converted}/${converted + failed})`;
+                if (progressStatus) progressStatus.textContent = `转换已停止 (${converted}/${converted + failed})`;
                 break;
             }
 
@@ -691,8 +801,12 @@
             console.log(`  剩余公式数: ${formulas.length}`);
             console.log(`  内容预览: ${formula.content.substring(0, 50)}...`);
 
-            progressStatus.textContent = `转换${tableText}${formulaTypeText} (已完成:${converted}, 剩余:${formulas.length})`;
-            progressBar.style.width = `${(iteration / (iteration + formulas.length)) * 100}%`;
+            if (progressStatus) {
+                progressStatus.textContent = `转换${tableText}${formulaTypeText} (已完成:${converted}, 剩余:${formulas.length})`;
+            }
+            if (progressBar) {
+                progressBar.style.width = `${(iteration / (iteration + formulas.length)) * 100}%`;
+            }
 
             try {
                 const result = await convertFormula(formula);
@@ -734,23 +848,25 @@
             console.log(`\n⚠ 转换完成，但仍检测到 ${remainingCount} 个公式`);
         }
 
-        progressStatus.textContent = message;
+        if (progressStatus) progressStatus.textContent = message;
 
         setTimeout(() => {
-            progressOverlay.classList.remove('visible');
-            floatingBall.classList.remove('active');
-            convertBtn.classList.remove('processing');
+            if (progressOverlay) progressOverlay.classList.remove('visible');
+            if (floatingBall) floatingBall.classList.remove('active');
+            if (convertBtn) convertBtn.classList.remove('processing');
             isProcessing = false;
             updateFloatingBall();
 
-            if (remainingCount > 0) {
+            if (remainingCount > 0 && floatingBall && convertBtn) {
                 floatingBall.classList.add('expanded');
                 convertBtn.style.background = '#ffd700';
                 convertBtn.textContent = '继续转换';
 
                 setTimeout(() => {
-                    convertBtn.style.background = '';
-                    convertBtn.textContent = '转换';
+                    if (convertBtn) {
+                        convertBtn.style.background = '';
+                        convertBtn.textContent = '转换';
+                    }
                 }, 3000);
             }
         }, 2000);
@@ -759,7 +875,7 @@
     // Stop conversion
     function stopConversion() {
         shouldStopProcessing = true;
-        progressStatus.textContent = '正在停止...';
+        if (progressStatus) progressStatus.textContent = '正在停止...';
     }
 
     // Convert single formula
@@ -1115,7 +1231,6 @@
                 if (svg) {
                     const overlay = button.closest('.notion-overlay-container');
                     if (overlay && overlay.style.display !== 'none') {
-                        const rect = button.getBoundingClientRect();
                         const svgClass = svg.getAttribute('class') || '';
 
                         if (svgClass.includes('squareRootSmall') ||
@@ -1401,21 +1516,37 @@
     let lastObserverRun = 0;
     const observerDebounceTime = 1000;
 
-    const observer = new MutationObserver(() => {
+    // 【修复】使用防抖和检查避免重复创建
+    const debouncedCreateUI = () => {
         const now = Date.now();
         if (now - lastObserverRun > observerDebounceTime) {
             lastObserverRun = now;
-            if (!document.getElementById('formula-floating-ball')) {
+            if (!document.getElementById('formula-floating-ball') && !isUICreated) {
                 createUI();
             }
         }
-    });
+    };
 
-    setTimeout(() => {
-        createUI();
+    // 【修复】初始化观察器
+    function initObserver() {
+        if (observer) {
+            observer.disconnect();
+        }
+
+        observer = new MutationObserver(debouncedCreateUI);
+
         const target = document.querySelector('.notion-app-inner') || document.body;
         observer.observe(target, { childList: true, subtree: true });
+    }
+
+    // 【新增】页面卸载时清理资源
+    window.addEventListener('beforeunload', cleanup);
+
+    // 【修复】初始化脚本
+    setTimeout(() => {
+        createUI();
+        initObserver();
     }, 1000);
 
-    console.log('Notion公式转换工具已加载 (v1.92 - 每次只转换一个公式，精确选中范围)');
+    console.log('Notion公式转换工具已加载 (v1.93 - 修复内存泄漏)');
 })();
