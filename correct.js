@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name             Notion-Formula-Auto-Conversion-Tool-Fixed
 // @namespace        http://tampermonkey.net/
-// @version          1.93
-// @description      自动公式转换工具 - 修复内存泄漏问题
+// @version          1.98
+// @description      自动公式转换工具 - 添加自动滚动功能
 // @author           temp
 // @match            https://www.notion.so/*
 // @grant            GM_addStyle
@@ -352,9 +352,9 @@
         floatingBall.addEventListener('mouseleave', eventHandlers.mouseleave);
 
         updateFloatingBall();
-        
-        // 【修复】保存定时器引用
-        updateInterval = setInterval(updateFloatingBall, 3000);
+
+        // 【优化】保存定时器引用，增加间隔减少性能开销（3秒→5秒）
+        updateInterval = setInterval(updateFloatingBall, 5000);
     }
 
     // Animation frame handling
@@ -433,9 +433,31 @@
         }, 300);
     }
 
+    // 【优化】防抖变量
+    let lastUpdateTime = 0;
+    const UPDATE_DEBOUNCE = 1000; // 1秒防抖
+
     // Update floating ball display
     function updateFloatingBall() {
         if (isProcessing) return;
+
+        // 【优化】防抖：避免频繁更新
+        const now = Date.now();
+        if (now - lastUpdateTime < UPDATE_DEBOUNCE) {
+            return;
+        }
+        lastUpdateTime = now;
+
+        // 【优化】快速检查：如果页面没有$符号，直接跳过
+        const pageText = document.body.textContent || '';
+        if (!pageText.includes('$')) {
+            const countElement = document.getElementById('formula-count');
+            if (countElement) {
+                countElement.textContent = '无公式';
+                if (convertBtn) convertBtn.disabled = true;
+            }
+            return;
+        }
 
         const formulas = getAllFormulas();
         formulaCount = formulas.length;
@@ -588,17 +610,18 @@
 
                     const extractedFormulas = extractFormulasFromText(currentFormula);
                     for (const formula of extractedFormulas) {
-                        const uniqueKey = formula.content + '|' + formulaNodes[0]?.parentElement?.textContent?.substring(0, 50);
+                        // 【修复】使用叶子节点textContent作为uniqueKey，避免parentElement的不稳定性
+                        const leafNode = formulaNodes[0]?.parentElement?.closest('[data-content-editable-leaf="true"]');
+                        const uniqueKey = formula.content + '|' + (leafNode?.textContent || '').substring(0, 50);
                         if (!processedTexts.has(uniqueKey)) {
                             processedTexts.add(uniqueKey);
-                            const firstNode = formulaNodes[0];
+                            // 【关键修复】不保存nodes引用（从未被使用，且导致严重内存泄漏）
                             formulas.push({
                                 type: formula.type,
                                 content: formula.content,
                                 fullMatch: formula.fullMatch,
-                                nodes: [...formulaNodes],  // 数组副本
                                 isTableCell: false,
-                                domPosition: getDOMPosition(firstNode?.parentElement)
+                                domPosition: getDOMPosition(leafNode)
                             });
                         }
                     }
@@ -612,17 +635,16 @@
                     if (text.includes('\n') || text.includes('。') || text.includes('.') || text.includes('，')) {
                         const extractedFormulas = extractFormulasFromText(currentFormula);
                         for (const formula of extractedFormulas) {
-                            const uniqueKey = formula.content + '|' + formulaNodes[0]?.parentElement?.textContent?.substring(0, 50);
+                            const leafNode = formulaNodes[0]?.parentElement?.closest('[data-content-editable-leaf="true"]');
+                            const uniqueKey = formula.content + '|' + (leafNode?.textContent || '').substring(0, 50);
                             if (!processedTexts.has(uniqueKey)) {
                                 processedTexts.add(uniqueKey);
-                                const firstNode = formulaNodes[0];
                                 formulas.push({
                                     type: formula.type,
                                     content: formula.content,
                                     fullMatch: formula.fullMatch,
-                                    nodes: [...formulaNodes],
                                     isTableCell: false,
-                                    domPosition: getDOMPosition(firstNode?.parentElement)
+                                    domPosition: getDOMPosition(leafNode)
                                 });
                             }
                         }
@@ -635,17 +657,16 @@
             if (currentFormula) {
                 const extractedFormulas = extractFormulasFromText(currentFormula);
                 for (const formula of extractedFormulas) {
-                    const uniqueKey = formula.content + '|' + formulaNodes[0]?.parentElement?.textContent?.substring(0, 50);
+                    const leafNode = formulaNodes[0]?.parentElement?.closest('[data-content-editable-leaf="true"]');
+                    const uniqueKey = formula.content + '|' + (leafNode?.textContent || '').substring(0, 50);
                     if (!processedTexts.has(uniqueKey)) {
                         processedTexts.add(uniqueKey);
-                        const firstNode = formulaNodes[0];
                         formulas.push({
                             type: formula.type,
                             content: formula.content,
                             fullMatch: formula.fullMatch,
-                            nodes: [...formulaNodes],
                             isTableCell: false,
-                            domPosition: getDOMPosition(firstNode?.parentElement)
+                            domPosition: getDOMPosition(leafNode)
                         });
                     }
                 }
@@ -889,6 +910,24 @@
         console.log(`开始转换${isTableCell ? '表格中的' : ''}${formula.type === 'block' ? '块级' : '内联'}公式 (${formulaLength} 字符): "${formula.content.substring(0, 50)}${formulaLength > 50 ? '...' : ''}"`);
 
         try {
+            // 【新增】自动滚动到公式位置
+            const targetElement = isTableCell && formula.element
+                ? formula.element
+                : document.querySelector('[data-content-editable-leaf="true"]');
+
+            if (targetElement) {
+                // 查找包含公式的叶子节点
+                const leafElements = document.querySelectorAll('[data-content-editable-leaf="true"]');
+                for (const leaf of leafElements) {
+                    if (leaf.textContent && leaf.textContent.includes(formula.fullMatch)) {
+                        console.log('滚动到公式位置');
+                        leaf.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        await sleep(300); // 等待滚动完成
+                        break;
+                    }
+                }
+            }
+
             if (isTableCell && formula.element) {
                 console.log('使用表格单元格特殊处理流程');
 
@@ -983,62 +1022,46 @@
             await simulateTyping(inputElement);
             await sleep(isLongFormula ? 200 : 100);
 
+            // 【修复】清空输入框 - 只使用一种方式
             if (inputElement.tagName === 'TEXTAREA') {
                 inputElement.value = '';
             } else {
                 inputElement.textContent = '';
-                inputElement.innerText = '';
             }
 
             await sleep(50);
 
-            if (isLongFormula) {
-                console.log('使用分段输入方式处理长公式');
-                const chunkSize = 500;
-                const chunks = [];
-
-                for (let i = 0; i < formula.content.length; i += chunkSize) {
-                    chunks.push(formula.content.substring(i, Math.min(i + chunkSize, formula.content.length)));
-                }
-
-                for (const chunk of chunks) {
-                    if (inputElement.tagName === 'TEXTAREA') {
-                        inputElement.value += chunk;
-                        inputElement.dispatchEvent(new Event('input', { bubbles: true }));
-                    } else {
-                        inputElement.textContent += chunk;
-                        inputElement.innerText += chunk;
-                        inputElement.dispatchEvent(new Event('input', { bubbles: true }));
-                    }
-                    await sleep(50);
-                }
-
-                inputElement.dispatchEvent(new Event('change', { bubbles: true }));
+            // 【修复】直接设置内容，避免复杂的事件模拟导致文本篡改
+            if (inputElement.tagName === 'TEXTAREA') {
+                inputElement.value = formula.content;
             } else {
-                if (inputElement.tagName === 'TEXTAREA') {
-                    inputElement.value = formula.content;
-                    inputElement.dispatchEvent(new Event('input', { bubbles: true }));
-                    inputElement.dispatchEvent(new Event('change', { bubbles: true }));
-                } else {
-                    inputElement.textContent = formula.content;
-                    inputElement.innerText = formula.content;
-                    inputElement.dispatchEvent(new Event('input', { bubbles: true }));
-                }
+                inputElement.textContent = formula.content;
             }
 
-            await sleep(isLongFormula ? 300 : 100);
+            // 【关键修复】使用简单的Event，避免InputEvent的data参数导致文本被篡改
+            const inputEvent = new Event('input', { bubbles: true });
+            inputElement.dispatchEvent(inputEvent);
+            await sleep(100);
+
+            const changeEvent = new Event('change', { bubbles: true });
+            inputElement.dispatchEvent(changeEvent);
+
+            // 【优化】给Notion更多时间处理输入和渲染预览
+            await sleep(isLongFormula ? 500 : 200);
 
             const doneButton = await findButton(area, {
                 buttonText: ['Done', '完成', 'Confirm', '确认', 'OK'],
-                attempts: isLongFormula ? 50 : 30,
-                delay: isLongFormula ? 150 : 100,
+                attempts: isLongFormula ? 60 : 40,
+                delay: isLongFormula ? 200 : 150,
                 shouldStop: () => shouldStopProcessing
             });
 
             if (doneButton) {
+                console.log(`找到完成按钮，准备点击`);
                 await simulateClick(doneButton);
+                // 【优化】点击后等待更长时间，确保Notion完成转换
+                await sleep(isTableCell ? 700 : (isLongFormula ? 600 : 300));
                 console.log(`${isTableCell ? '表格' : ''}${formula.type === 'block' ? '块级' : '内联'}公式转换成功 (${formulaLength} 字符)`);
-                await sleep(isTableCell ? 500 : (isLongFormula ? 400 : 200));
                 return true;
             }
 
@@ -1427,6 +1450,29 @@
 
             const buttons = area.querySelectorAll('[role="button"]');
             const button = Array.from(buttons).find(btn => {
+                // 【优化】优先查找特征更明显的按钮（有蓝色背景的完成按钮）
+                if (buttonText.length > 0) {
+                    const text = btn.textContent.toLowerCase().trim();
+                    const hasMatchingText = buttonText.some(t => text.includes(t.toLowerCase()));
+
+                    if (hasMatchingText) {
+                        // 检查是否是带有arrowTurnDownLeftSmall图标的完成按钮
+                        const svg = btn.querySelector('svg.arrowTurnDownLeftSmall, svg.directional-icon');
+                        if (svg) {
+                            console.log('找到带图标的完成按钮');
+                            return true;
+                        }
+                        // 或者检查是否有蓝色背景样式
+                        const bgColor = window.getComputedStyle(btn).backgroundColor;
+                        if (bgColor && bgColor !== 'rgba(0, 0, 0, 0)' && bgColor !== 'transparent') {
+                            console.log('找到有背景色的完成按钮');
+                            return true;
+                        }
+                        // 普通文本匹配
+                        return true;
+                    }
+                }
+
                 if (hasSvg) {
                     const svg = btn.querySelector(`svg.${svgClass}`);
                     if (svg) return true;
@@ -1442,12 +1488,6 @@
                     }
                 }
 
-                if (buttonText.length > 0) {
-                    const text = btn.textContent.toLowerCase();
-                    if (buttonText.some(t => text.includes(t.toLowerCase()))) {
-                        return true;
-                    }
-                }
                 return false;
             });
             if (button) return button;
@@ -1514,7 +1554,7 @@
     }
 
     let lastObserverRun = 0;
-    const observerDebounceTime = 1000;
+    const observerDebounceTime = 3000;  // 【优化】增加防抖时间（1秒→3秒）
 
     // 【修复】使用防抖和检查避免重复创建
     const debouncedCreateUI = () => {
@@ -1548,5 +1588,5 @@
         initObserver();
     }, 1000);
 
-    console.log('Notion公式转换工具已加载 (v1.93 - 修复内存泄漏)');
+    console.log('Notion公式转换工具已加载 (v1.98 - 添加自动滚动功能)');
 })();
