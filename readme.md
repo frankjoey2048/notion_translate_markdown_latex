@@ -1,12 +1,10 @@
 # Notion公式转换工具
 
 > 初始代码源自：https://github.com/skyance/Notion-Formula-Auto-Conversion-Tool
-## 已知问题
-特别长的公式没解决，例如：
-$\begin{aligned} \boldsymbol{q}_i^{(s)} &= \left[ \boldsymbol{c}'i \boldsymbol{W}{qc}^{(s)}, \boldsymbol{c}'i \boldsymbol{W}{qr}^{(s)} \boldsymbol{\mathcal{R}}i \right] \in \mathbb{R}^{d_k + d_r}, & \boldsymbol{W}{qc}^{(s)} \in \mathbb{R}^{d'c \times d_k}, & \boldsymbol{W}{qr}^{(s)} \in \mathbb{R}^{d'_c \times d_r} \\ \boldsymbol{k}i^{(s)} &= \left[ \boldsymbol{c}i \boldsymbol{W}{kc}^{(s)}, \boldsymbol{x}i \boldsymbol{W}{kr}^{} \boldsymbol{\mathcal{R}}i \right] \in \mathbb{R}^{d_k + d_r}, & \boldsymbol{W}{kc}^{(s)} \in \mathbb{R}^{d_c \times d_k}, & \boldsymbol{W}{kr}^{} \in \mathbb{R}^{d \times d_r} \\ \boldsymbol{v}_i^{(s)} &= \boldsymbol{c}_i \boldsymbol{W}_v^{(s)} \in \mathbb{R}^{d_v}, & \boldsymbol{W}_v^{(s)} \in \mathbb{R}^{d_c \times d_v} \\  \end{aligned} \\$
 
 ## 更新日志
-
+### 2025年11月7日 - v1.98
+- **修复长公式问题**
 
 ### 2025年11月6日 - v1.93
 - **修复内存泄露问题**
