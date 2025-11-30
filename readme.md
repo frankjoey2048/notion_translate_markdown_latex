@@ -3,6 +3,10 @@
 > 初始代码源自：https://github.com/skyance/Notion-Formula-Auto-Conversion-Tool
 
 ## 更新日志
+
+### 2025年12月1日 - v1.99
+- **修复表格内公式选中问题**
+
 ### 2025年11月7日 - v1.98
 - **修复长公式问题**
 

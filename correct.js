@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name             Notion-Formula-Auto-Conversion-Tool-Fixed
 // @namespace        http://tampermonkey.net/
-// @version          1.98
-// @description      自动公式转换工具 - 添加自动滚动功能
+// @version          1.99
+// @description      自动公式转换工具 - 修复表格单元格公式选中问题
 // @author           temp
 // @match            https://www.notion.so/*
 // @grant            GM_addStyle
@@ -935,31 +935,36 @@
                 await simulateClick(cell);
                 await sleep(200);
 
-                const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-                const metaKey = isMac ? 'metaKey' : 'ctrlKey';
+                // 【修复】优先尝试精确选中公式部分，而不是整个单元格
+                const selected = await selectFormulaTextInCell(cell, formula.fullMatch);
+                if (!selected) {
+                    console.warn('无法精确选中公式，尝试备用方法（选中整个单元格）');
+                    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+                    const metaKey = isMac ? 'metaKey' : 'ctrlKey';
 
-                cell.focus();
-                await sleep(100);
+                    cell.focus();
+                    await sleep(100);
 
-                const selectAllEvent = new KeyboardEvent('keydown', {
-                    key: 'a',
-                    code: 'KeyA',
-                    keyCode: 65,
-                    [metaKey]: true,
-                    bubbles: true,
-                    cancelable: true
-                });
+                    const selectAllEvent = new KeyboardEvent('keydown', {
+                        key: 'a',
+                        code: 'KeyA',
+                        keyCode: 65,
+                        [metaKey]: true,
+                        bubbles: true,
+                        cancelable: true
+                    });
 
-                cell.dispatchEvent(selectAllEvent);
-                await sleep(100);
+                    cell.dispatchEvent(selectAllEvent);
+                    await sleep(100);
 
-                const selection = window.getSelection();
-                selection.removeAllRanges();
-                const range = document.createRange();
-                range.selectNodeContents(cell);
-                selection.addRange(range);
+                    const selection = window.getSelection();
+                    selection.removeAllRanges();
+                    const range = document.createRange();
+                    range.selectNodeContents(cell);
+                    selection.addRange(range);
 
-                await sleep(100);
+                    await sleep(100);
+                }
             } else {
                 const selected = await selectFormulaText(formula.fullMatch, false);
                 if (!selected) {
@@ -1272,6 +1277,82 @@
         return false;
     }
 
+    // 【新增】在表格单元格内精确选中公式文本
+    async function selectFormulaTextInCell(cell, formulaText) {
+        if (!cell || !formulaText) return false;
+
+        try {
+            const cellText = cell.textContent || '';
+            const startIndex = cellText.indexOf(formulaText);
+
+            if (startIndex === -1) {
+                console.warn('单元格中找不到公式文本');
+                return false;
+            }
+
+            const endIndex = startIndex + formulaText.length;
+            console.log(`在单元格中找到公式，位置: ${startIndex} - ${endIndex}`);
+
+            cell.focus();
+            await sleep(100);
+
+            const selection = window.getSelection();
+            selection.removeAllRanges();
+
+            // 使用TreeWalker遍历文本节点，精确定位公式
+            const walker = document.createTreeWalker(
+                cell,
+                NodeFilter.SHOW_TEXT,
+                null,
+                false
+            );
+
+            let currentPos = 0;
+            let startNode = null, startOffset = 0;
+            let endNode = null, endOffset = 0;
+            let node;
+
+            while (node = walker.nextNode()) {
+                const nodeLength = node.textContent.length;
+                const nodeEnd = currentPos + nodeLength;
+
+                // 找到开始节点
+                if (startNode === null && startIndex >= currentPos && startIndex < nodeEnd) {
+                    startNode = node;
+                    startOffset = startIndex - currentPos;
+                }
+
+                // 找到结束节点
+                if (endIndex > currentPos && endIndex <= nodeEnd) {
+                    endNode = node;
+                    endOffset = endIndex - currentPos;
+                    break;
+                }
+
+                currentPos = nodeEnd;
+            }
+
+            if (startNode && endNode) {
+                const range = document.createRange();
+                range.setStart(startNode, startOffset);
+                range.setEnd(endNode, endOffset);
+                selection.addRange(range);
+
+                document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true }));
+                await sleep(100);
+
+                console.log('成功在单元格中精确选中公式');
+                return true;
+            }
+
+            console.warn('无法定位公式的精确范围');
+            return false;
+        } catch (error) {
+            console.error('在单元格中选中公式时出错:', error);
+            return false;
+        }
+    }
+
     // Select formula text - 在叶子节点内精确选中公式范围
     async function selectFormulaText(formulaText, isTableCell = false) {
         if (!formulaText || shouldStopProcessing) return false;
@@ -1372,6 +1453,14 @@
                     const cellText = cell.textContent || '';
 
                     if (cellText.includes(formulaText)) {
+                        // 【修复】优先尝试精确选中公式，而不是选中整个单元格
+                        const selected = await selectFormulaTextInCell(cell, formulaText);
+                        if (selected) {
+                            return true;
+                        }
+
+                        // 后备方案：选中整个单元格（可能导致问题，但作为最后手段）
+                        console.warn('精确选中失败，尝试选中整个单元格');
                         cell.focus();
                         await sleep(100);
 
@@ -1588,5 +1677,5 @@
         initObserver();
     }, 1000);
 
-    console.log('Notion公式转换工具已加载 (v1.98 - 添加自动滚动功能)');
+    console.log('Notion公式转换工具已加载 (v1.99 - 修复表格单元格公式选中问题)');
 })();
