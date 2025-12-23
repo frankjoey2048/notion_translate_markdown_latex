@@ -1,5 +1,5 @@
 # Notion公式转换工具
-
+如果是复制大模型的结果，推荐你先放到typora这样的markdown编辑器里作为中转，之后再放到notion里。
 > 初始代码源自：https://github.com/skyance/Notion-Formula-Auto-Conversion-Tool
 
 > 注意请保持你的下载是最新的
