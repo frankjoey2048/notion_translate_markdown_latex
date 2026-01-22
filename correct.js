@@ -1,14 +1,15 @@
 // ==UserScript==
 // @name             Notion-Formula-Auto-Conversion-Tool-Fixed
 // @namespace        http://tampermonkey.net/
-// @version          1.99
+// @version          2.0
 // @description      自动公式转换工具 - 修复表格单元格公式选中问题
 // @author           temp
 // @match            https://www.notion.so/*
 // @grant            GM_addStyle
 // @require          https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js
+// @updateURL        https://raw.githubusercontent.com/frankjoey2048/notion_translate_markdown_latex/main/correct.js
+// @downloadURL      https://raw.githubusercontent.com/frankjoey2048/notion_translate_markdown_latex/main/correct.js
 // ==/UserScript==
-
 (function() {
     'use strict';
 
